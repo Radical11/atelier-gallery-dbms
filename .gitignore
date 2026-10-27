@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+instance/.secret
+instance/*.sqlite-wal
+instance/*.sqlite-shm
+instance/presentation/
+work/
+.env
+.env.*
+*.pem
+*.key

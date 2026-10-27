@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Atelier{% endblock %} — Atelier Museum</title>
+  <meta name="description" content="Discover art, stories, exhibitions, and auctions at Atelier Museum.">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="header-top"><a class="wordmark" href="{{ url_for('web.home') }}" aria-label="Atelier Museum home">ATELIER<span>✳</span></a><div class="header-note">A MUSEUM FOR THE CURIOUS<br><span>ART · PEOPLE · STORIES</span></div><div class="header-right"><span>OPEN TO DISCOVERY</span><button class="menu-toggle" aria-expanded="false" aria-controls="main-nav">Menu <span>☰</span></button></div></div>
+  <nav id="main-nav" class="main-nav" aria-label="Main navigation"><div class="nav-main"><a href="{{ url_for('web.collection') }}">Collection</a><a href="{{ url_for('web.exhibitions') }}">Exhibitions</a><a href="{{ url_for('web.auctions') }}">Auctions</a></div><div class="nav-account"><button type="button" class="motion-toggle" data-motion-toggle aria-pressed="false" hidden>3D effects: Off</button>{% if current_user %}{% if current_user.role == 'bidder' %}<a href="{{ url_for('web.account') }}">My account</a>{% endif %}{% if current_user.role in ['admin', 'staff'] %}<a href="{{ url_for('web.admin') }}">Staff desk ↗</a>{% endif %}<form action="{{ url_for('web.logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button>Sign out</button></form>{% else %}<a href="{{ url_for('web.login') }}">Sign in ↗</a>{% endif %}</div></nav>
+</header>
+{% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-wrap" aria-live="polite">{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+<main id="main">{% block content %}{% endblock %}</main>
+<dialog class="art-viewer" aria-labelledby="viewer-title" aria-describedby="viewer-help"><div class="viewer-header"><div><p class="eyebrow">A CLOSER LOOK</p><h2 id="viewer-title"></h2></div><button class="viewer-close" type="button" data-viewer-close aria-label="Close artwork viewer">×</button></div><div class="viewer-stage"><div class="viewer-frame" data-viewer-frame><span class="viewer-fallback" aria-hidden="true">✳</span><img alt="" data-viewer-image></div></div><p id="viewer-help">Use the buttons to change your view. You can also drag the artwork with a pointer.</p><div class="viewer-controls" aria-label="Artwork view controls"><button type="button" data-view="left" aria-label="Turn artwork left">← <span>Left</span></button><button type="button" data-view="right" aria-label="Turn artwork right">→ <span>Right</span></button><button type="button" data-view="up" aria-label="Tilt artwork up">↑ <span>Up</span></button><button type="button" data-view="down" aria-label="Tilt artwork down">↓ <span>Down</span></button><button type="button" data-view="reset">Reset view</button></div></dialog>
+<footer class="site-footer"><div class="footer-head"><p class="eyebrow">A LITTLE MORE TO DISCOVER</p><p>Art is a conversation.<br><em>Let’s keep it going.</em></p><a class="round-arrow" href="{{ url_for('web.collection') }}" aria-label="Explore the collection">↗</a></div><div class="footer-bottom"><div><a class="footer-wordmark" href="{{ url_for('web.home') }}">ATELIER<span>✳</span></a><p>A place for looking closer.</p></div><div><strong>EXPLORE</strong><a href="{{ url_for('web.collection') }}">The collection</a><a href="{{ url_for('web.exhibitions') }}">Exhibitions</a><a href="{{ url_for('web.auctions') }}">Auctions</a></div><div><strong>YOUR VISIT</strong><a href="{{ url_for('web.admin') if current_user and current_user.role == 'staff' else (url_for('web.account') if current_user else url_for('web.login')) }}">Your account</a><span>Curiosity welcome, always.</span></div><div class="footer-mark">ART<br>IS FOR<br>EVERYONE<span>✳</span></div></div><div class="footer-legal"><span>© ATELIER MUSEUM</span><span>MADE FOR THE CURIOUS</span><a href="#main">BACK TO TOP ↑</a></div></footer>
+</body></html>
