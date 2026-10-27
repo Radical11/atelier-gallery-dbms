@@ -10,3 +10,6 @@ work/
 .env.*
 *.pem
 *.key
+instance/oracle.json
+instance/oracle-evidence/
+instance/oracle-migration.json

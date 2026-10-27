@@ -1,0 +1,18 @@
+{
+  "engine": "Oracle",
+  "checks": [
+    "Bid below starting price rejected",
+    "Concurrent equal bids: exactly one accepted, one rejected",
+    "Failed close rolls back new collector, sale and lot/artwork status",
+    "Concurrent closure is idempotent: one sale, same result to both callers",
+    "Reserve not met: unsold lot, no sale, artwork available",
+    "Database rejects bid edits, sale deletion/price edits and missing foreign keys",
+    "Finalized sale persists across independent Oracle connections"
+  ],
+  "auction_id": 100097,
+  "lot_ids": [
+    100098,
+    100099
+  ],
+  "sale_id": 100106
+}

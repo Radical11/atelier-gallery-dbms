@@ -1,163 +1,137 @@
-# Atelier — Art Gallery, Exhibition & Auction Management System
+# Atelier - Art Gallery, Exhibition & Auction Management System
 
-A local final-year DBMS demonstration with a museum-style public website, a staff data desk, genuine SQLite constraints, simulated auctions, and explainable SQL reports. The visual direction takes inspiration from The Met's editorial typography and artwork-led presentation; Atelier's identity, fictional collection, and generated assets are original.
+A local final-year DBMS demonstration using **Flask + Jinja + Oracle Database**. All live website features, login accounts, staff forms, auctions, reports and presentation demonstrations use Oracle. There is no SQLite fallback.
 
-![Interactive framed artwork viewer](docs/screenshots/artwork-viewer.png)
-
-![Admin presentation studio](docs/screenshots/presentation-studio.png)
+The museum-style interface uses original fictional art, a quiet editorial hero and subtle artwork hover effects. Assets are bundled locally.
 
 ## Run on Windows
 
-Python 3.11 or newer is required. Double-click **start.cmd**, or run:
-
-```powershell
-.\start.ps1
-```
-
-The launcher creates `.venv` and installs dependencies on the first run, then serves the app at **http://127.0.0.1:5000**. The first launch initializes `instance/atelier.sqlite`. Subsequent launches retain your changes. Stop the server with Ctrl+C in its terminal.
-
-Manual setup:
+This laptop already has Oracle Database **11g XE 11.2.0.2.0** and its 64-bit client installed. OracleServiceXE and OracleXETNSListener must be running. Python 3.11-3.13 is supported by the pinned driver used here.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe scripts\setup_oracle.py
 .\.venv\Scripts\python.exe run.py
 ```
 
-No Node build, external database server, email connection, or payment service is required. After dependencies are installed, the application and its visual assets work offline. It binds only to the local computer.
+Then open **http://127.0.0.1:5000**. On later runs, double-click **start.cmd** or run `./start.ps1`. Stop with Ctrl+C. Startup preserves Oracle data; it never resets or reseeds it.
 
-## Demo accounts
+Setup uses local OS DBA authentication once to create the isolated **ATELIER_PROJECT** schema in the existing XE database. It never changes other Oracle users. The app uses that project's ordinary schema login, never SYS/SYSTEM. Setup is repeatable and preserves existing records. The schema has a 200 MB quota and only its own CREATE SESSION/TABLE/VIEW/TRIGGER/SEQUENCE privileges.
 
-| Role | Email | Password | Initial activity |
-|---|---|---|---|
-| Staff | admin@atelier.example | AdminDemo!2026 | All management pages, auction controls, payment recording, SQL reports |
-| Bidder | maya@atelier.example | BidderDemo!2026 | Active bids and a completed ₹55,000 purchase |
-| Bidder | arjun@atelier.example | BidderDemo!2026 | Competing bids and a ₹45,000 purchase pending payment |
-| Bidder | sara@atelier.example | BidderDemo!2026 | New account with no bids or purchases |
+Local database credentials are generated into ignored `instance/oracle.json`. Do not publish this file. Alternatively set `ATELIER_ORACLE_USER`, `ATELIER_ORACLE_PASSWORD`, `ATELIER_ORACLE_DSN` and, for Oracle 11g, `ATELIER_ORACLE_CLIENT_DIR`. This laptop's client directory is `C:\oraclexe\app\oracle\product\11.2.0\server\bin`. The DSN is `localhost:1521/xe`.
 
-On the login page, choose a demo account to fill its credentials, then select **Sign in**. These use normal password verification, hashed credentials, and server-enforced roles. The displayed credentials are intentionally public local-demo fixtures. There is no public registration or password recovery.
+The installed Oracle 11g client requires python-oracledb 3.0.0 in Thick mode. Modern Thin mode alone cannot connect to Oracle 11g. See the [driver compatibility documentation](https://python-oracledb.readthedocs.io/en/v3.0.0/user_guide/installation.html).
 
-## What is included
-
-- Public home, searchable/filterable collection, artwork histories, exhibitions and auctions.
-- Original semi-3D hero composed of rendered sculpture cutouts, framed artworks, CSS pedestals and soft shadows. Gentle pointer parallax respects reduced-motion preferences; touch layouts are static.
-- Staff forms for all editable domain records, associative relationships, and expert assessments.
-- Bids and sales are historical ledgers: they are created through auction operations, not arbitrary CRUD forms. Accepted bids and final sale details cannot be edited or deleted; staff can update payment status.
-- Staff-controlled auction opening and lot closure; bidder accounts and purchase histories.
-- Six SQL report presets showing query text and live results. The application never executes arbitrary SQL supplied by a visitor.
-
-## Seed and reset
-
-The seed contains 6 artists, 12 artworks, 2 galleries, 3 curators, 3 exhibitions, 2 experts, 3 bidders, 3 auctions, 7 lots, 10 bids, 2 collectors, 2 sales, and linked assessment/representation/display records. All profiles and commercial activity are fictional.
-
-- **Autumn Contemporary** (auction 1) is open, with lots 101 and 102.
-- **Winter Preview** (auction 2) is draft, with lots 201 and 202.
-- **Recent Acquisitions** (auction 3) is closed: lots 301 and 302 sold; lot 303 missed its reserve. Its event and sale dates use the seed snapshot date.
-- Seed event dates describe fictional exhibition/auction schedules. Bidding is controlled explicitly by staff rather than by a clock, so the walkthrough remains available after those dates.
-
-Idempotently check/add the seed:
+Check connectivity without changing records:
 
 ```powershell
-.\.venv\Scripts\python.exe -m flask --app run seed
+.\.venv\Scripts\python.exe -m flask --app run oracle-check
 ```
 
-Restore the original fixture, replacing all your local demonstration changes:
+## Working demo accounts
 
-```powershell
-# Stop the running server first. This prompts before replacing data.
-.\.venv\Scripts\python.exe -m flask --app run reset-demo
-# For an intentional unattended reset:
-.\.venv\Scripts\python.exe -m flask --app run reset-demo --yes
-```
+| Role | Email | Password |
+| --- | --- | --- |
+| Staff | admin@atelier.example | AdminDemo!2026 |
+| Bidder | maya@atelier.example | BidderDemo!2026 |
+| Bidder | arjun@atelier.example | BidderDemo!2026 |
+| Bidder | sara@atelier.example | BidderDemo!2026 |
 
-Normal startup does not reset or reseed an existing database. Keep a copy of the SQLite file if you want to preserve a presentation dataset before resetting it.
+The intentionally public local-demo credentials use real password-hash verification in Oracle. Demo-account buttons fill the login form; staff and bidder roles are checked server-side. There is no public registration. All commercial activity and payments are fictional.
 
-## Presentation walkthrough
+## Present the assignment
 
-### Present smoothly from the admin portal
+Sign in as staff, then open **Staff desk -> Oracle presentation studio**.
 
-Sign in as **Admin**, open **Staff desk → Presentation studio**, and choose **Start guided demo**. Run the eight steps in order: artwork creation, exhibition membership, expert records, auction opening, Maya's bid, Sara's higher bid, sale, and completed payment. Each step shows before/after rows, actual executed SQL and a parameterized result query. Revisit any completed result without rerunning it. **Restart demo** begins a fresh presentation copy.
+| Member | Module | Required operations |
+| --- | --- | --- |
+| Vihaan | Artists & collection | 1 INSERT, 1 UPDATE, 1 DELETE, 5 SELECT |
+| Kaashvi | Galleries & exhibitions | 1 INSERT, 1 UPDATE, 1 DELETE, 5 SELECT |
+| Gaurav | Auctions & lots | 1 INSERT, 1 UPDATE, 1 DELETE, 5 SELECT |
+| Shanil | Bidders & bids | 1 INSERT, 1 UPDATE, 1 DELETE, 5 SELECT |
+| Ashutosh | Experts & appraisals | 1 INSERT, 1 UPDATE, 1 DELETE, 5 SELECT |
 
-The guided flow runs real SQL and the same auction services in a separate session-specific SQLite database. The main gallery database is unchanged. A completed step and its evidence are published together from a staged SQLite snapshot; duplicate submissions are rejected, and failures preserve the previous step. This runner is for the local single-process presentation server.
+Each person can enter their name. Run INSERT -> UPDATE -> DELETE for their new demonstration record. SELECTs may run at any time, and show simple search, joins, aggregation, one-level IN subqueries and basic SQL functions. The portal displays SQL, bound values, affected rows and real Oracle results. It saves evidence in Oracle and offers **Download my outputs**. Only the module's own demonstration record can be mutated by these presets. Accepted bids and final sales remain protected.
 
-Use the studio's other views to explain the backend:
+Other studio views:
 
-- **Database explorer:** live table DDL, column types, primary keys, required fields, foreign keys, indexes, row counts and previews for all 16 domain tables. Login records and password hashes are excluded.
-- **Rules & transactions:** actual SQLite triggers and Python transaction services.
-- **How it works:** the browser → Flask → SQLite → rendered-result request flow, with presentation shortcuts.
-- **Reports:** the main gallery's six live aggregate/join queries remain available in the staff navigation.
+- **Full sale walkthrough:** eight atomic Oracle steps: artwork -> exhibition -> expert checks -> auction listing -> two competing bids -> sale -> completed payment. The completed sale appears in normal website reports.
+- **Database explorer:** actual Oracle DDL, constraints and record previews for all 16 domain tables. Account hashes are excluded.
+- **Rules & transactions:** compiled Oracle trigger source and the actual Python auction services.
+- **DDL, TCL & coverage:** live CREATE/ALTER/INDEX/DROP, COMMIT/SAVEPOINT/ROLLBACK, set operations, ALL and a revenue view.
 
-### Explore the frames
+The walkthrough creates clearly named fictional presentation records in the main Oracle schema. It is not a hidden SQLite sandbox. A step, progress and execution evidence commit together. Repeated submissions are rejected. Individual workspaces are associated with the signed browser session, so download the outputs before signing out or clearing cookies. Existing evidence remains stored in Oracle; the prior session token is required to retrieve that session's export.
 
-Artwork cards have deeper beveled frames, mat boards and edge shadows. Hovering a hero frame tilts it; selecting it opens the artwork. Use **Inspect artwork** on a card or detail page to open the larger viewer. Rotate with Left/Right/Up/Down buttons or drag; **Reset view** restores the angle. Escape closes the dialog and returns focus to its opening button. The **3D effects** toggle remembers your preference; automatic movement pauses for touch and reduced-motion users. All inspection functions have keyboard-accessible buttons.
+## Submission material
 
-### Present using the ordinary account and management pages
+- [Compliance matrix](docs/assignment/COMPLIANCE.md)
+- [Report chapter with all 40 individual SQL statements and actual output tables](docs/assignment/REPORT_CHAPTER.md)
+- [Full structured execution evidence, including the complete sale workflow](docs/assignment/ORACLE_EXECUTION_OUTPUTS.md)
+- [Simplified member query verification](docs/assignment/MEMBER_VERIFICATION.json)
+- [Original full migration verification](docs/assignment/VERIFICATION.json)
+- [Concurrency, reserve and rollback verification](docs/assignment/TRANSACTION_VERIFICATION.json)
+- [Staff form and validation verification](docs/assignment/FORM_VERIFICATION.json)
+- [Simple query guide for all five members](docs/assignment/SIMPLE_QUERIES.md)
+- [Five SQL*Plus module scripts](oracle/modules)
+- [Actual SQL*Plus terminal outputs for all five members](docs/assignment/sqlplus-outputs)
 
-1. Browse the home, collection, exhibitions, and an artwork's expert history.
-2. Sign in as staff. In **Staff desk → Artworks**, create an artwork using an existing artist and one of the original collection images. Its initial status is `available`.
-3. In **Exhibition artworks**, link the new artwork to an exhibition with a display position.
-4. Add an **Appraisal** and **Artwork authentication** record, selecting an existing art expert. Use a unique certificate number.
-5. In **Auction lots**, add the artwork to **Winter Preview**, with an unused lot number (such as 3), a ₹50,000 starting price, and a ₹60,000 reserve.
-6. Open **Auctions → Winter Preview** and select **Open auction**. Opening affects every draft lot in that auction atomically.
-7. Sign out and use Maya to bid ₹65,000. Sign out and use Sara to bid ₹70,000. A second browser session can demonstrate competing bidders without repeatedly signing out.
-8. Sign in as staff, open the auction, and **Close lot**. Sara becomes its collector and a pending ₹70,000 sale is recorded.
-9. In **Staff desk → Sales**, set that sale's payment status to completed.
-10. Open **Reports → Collector spending** and **Revenue by gallery**. Show both the SQL and the changed totals.
-11. Show constraint behavior: repeat a bid amount, delete a referenced artist, duplicate an exhibition-artwork pair, or enter reversed exhibition dates. The application preserves data and explains the rejection.
+Fill in the student registration numbers and incorporate the chapter into the college's final project report. The supplied requirement and basic SQL topics are covered; a grade or acceptance by the examiner is not guaranteed.
 
-You can also close Autumn Contemporary's lot 102 immediately to show an unsold outcome: its seeded highest bid is ₹35,000 and its reserve is ₹40,000.
+## Active database SQL
 
-## Database mapping and normalization
+| File | Purpose |
+| --- | --- |
+| `oracle/00_create_user.sql` | Manual SQL*Plus provisioning alternative |
+| `oracle/01_schema.sql` | 16 domain tables, 2 presentation tables, keys/checks/indexes/sequence/revenue view |
+| `oracle/02_seed.sql` | Fictional baseline data, integer paise and Oracle DATE/TIMESTAMP literals |
+| `oracle/03_rules.sql` | Seven Oracle triggers for bid/sale history and auction/lot state |
+| `oracle/04_ddl_tcl.sql` | Separate representative DDL and TCL examples |
+| `oracle/05_accounts.sql` | Login table; Python setup inserts hashed demo credentials |
+| `oracle/modules/*.sql` | Each person's three DML and five SELECT statements |
 
-`atelier/schema.sql` is the authoritative DDL; `atelier/seed.py` creates the fixture; `atelier/services.py` implements transactional auction operations. The 16 supplied domain entities are retained, plus `user_account` for website authentication.
+There are **19 Oracle tables**: the 16 specified domain tables, `user_account`, `lab_workspace` and `lab_evidence`. Auction's supplied Date attribute is the quoted Oracle column `"DATE"` because DATE is a reserved type keyword. Oracle NUMBER/DATE/VARCHAR2 types replace SQLite-specific types; the entities and relationships are preserved.
 
-| Table | Key and relationship mapping |
-|---|---|
-| artist | `artist_id`; artist profile and life dates |
-| artwork | `artwork_id`; mandatory `artist_id` → artist |
-| gallery | `gallery_id`; gallery profile and contact details |
-| curator | `curator_id`; curator profile |
-| exhibition | `exhibition_id`; mandatory `gallery_id` and `curator_id` |
-| artist_gallery | composite `(artist_id, gallery_id)`; dates and commission |
-| exhibition_artwork | composite `(exhibition_id, artwork_id)`; display position |
-| auction | `auction_id`; mandatory organizing `gallery_id`; workflow status |
-| auction_lot | `lot_id`; mandatory `auction_id` and `artwork_id`; unique auction/lot number and auction/artwork pairs |
-| bid | `bid_id`; mandatory lot and bidder; immutable accepted bid history |
-| bidder | `bidder_id`; unique email; bidder contact details |
-| sale | `sale_id`; unique mandatory winning `bid_id`; mandatory collector; final price, date and payment status |
-| collector | `collector_id`; unique mandatory `bidder_id` identifies the same buyer |
-| art_expert | `expert_id`; expert profile and specialization |
-| appraisal | `appraisal_id`; mandatory artwork and expert; estimate and date |
-| authentication | `authentication_id`; mandatory artwork and expert; unique certificate, result and date |
-| user_account | `user_id`; password hash, role, and optional unique bidder link; role/link consistency check |
+### Relationships, normalization and integrity
 
-The foreign keys added to relational tables implement the Chen relationships. Mandatory child participation becomes a non-null foreign key; partial parent participation permits a parent with no child records. Many-to-many relationships use the two associative tables, whose non-null composite primary keys prevent duplicate memberships. A winning bid may have zero or one sale through `sale.bid_id UNIQUE NOT NULL`.
+- Mandatory foreign keys implement total child participation. Optional parent participation permits zero children. Referenced records cannot be deleted.
+- Artist-gallery and exhibition-artwork relationships use composite primary keys. The artwork-lot relationship is 1:N over time. A function-based unique index permits only one open listing per artwork.
+- A sale has exactly one unique winning bid and a matching collector identity. A bid may have no sale. Final selling price exists on SALE, not AUCTION_LOT.
+- Artists, curators, galleries and experts are separate entities. Assessment rows reference expert IDs rather than repeating names. Collector contact attributes are retained as required by the supplied model; the unique bidder link preserves identity. Do not claim that this retained snapshot duplication is a perfectly redundancy-free design.
+- Money uses integer paise in NUMBER(18,0) columns. The application validates precision and bounds before binding monetary input. Dates use Oracle DATE and ordering checks; commissions are bounded from 0 to 100.
+- Oracle triggers enforce bid thresholds, immutable accepted history, reserve/collector/price consistency and auction/lot transitions. Compound triggers avoid querying mutating bid/sale tables from row-level triggers.
+- Auction operations use SELECT FOR UPDATE followed by COMMIT or ROLLBACK. A bounded session pool reuses up to six connections. A failed close cannot leave a partial collector, sale or status update. Repeated closure returns the original outcome.
+- Flask-WTF CSRF protection, hashed passwords, signed HttpOnly/SameSite cookies, server-side roles and parameterized SQL remain in use. Management table identifiers are allow-listed. No arbitrary SQL console is exposed.
 
-The design separates artists, curators, galleries and experts instead of repeating their names on every dependent row. Junction attributes depend on the complete composite key. Scalar profile fields remain atomic at the application's scope. Collector contact fields are retained because the supplied model explicitly includes them; its unique bidder link preserves buyer identity. Normalized reports join through identities rather than matching names or emails.
+## Codebase
 
-`Total_Amount_Spent` is derived using a conditional aggregate over completed payments and is not stored on the collector. The final selling price exists only on `sale`, and is checked against the winning bid when the sale is created. The immutable bid amount is the historical offer; it is not a second final-price field on the lot.
+- `atelier/__init__.py`: app factory, CSRF, blueprint setup and Oracle health command.
+- `atelier/oracle_db.py`: local configuration, compatible Oracle client initialization and connection pool.
+- `atelier/db.py`: Oracle-only rows/results, binds, date formatting, generated sequence IDs and request teardown.
+- `atelier/web.py`: public pages, login, role checks, CRUD forms and report routes.
+- `atelier/services.py`: opening auctions, serialized bids, transactional closure and payment updates.
+- `atelier/registry.py`: allow-listed forms derived from Oracle's data dictionary.
+- `atelier/queries.py`: six Oracle SELECT reports.
+- `atelier/assignment_queries.py`: five member modules and supplemental SQL presets.
+- `atelier/presentation.py`: actual SQL execution, progress, evidence export, schema inspection and eight-step workflow.
+- `atelier/templates` and `atelier/static`: museum-style Jinja UI, local images, restrained hover effects.
 
-### Integrity and transactions
+The browser layout and art remain local and offline after dependencies are installed. Hover lift respects the effects toggle and reduced motion; dragging and the separate artwork inspector remain removed. The unused earlier Three.js experiment is retained in the source but is not loaded by the homepage. Its license is in `docs/THIRD_PARTY.md`.
 
-- Every connection enables `PRAGMA foreign_keys=ON`; relationship/history deletion uses `RESTRICT`.
-- `NOT NULL`, `UNIQUE`, `CHECK`, composite keys and a partial unique index enforce mandatory references, nonnegative integer-paise amounts, calendar/date ordering, commission bounds, unique certificates and one active lot per artwork.
-- Database triggers reject invalid bids even through direct SQL, preserve accepted bids/finalized sale details, and validate winning bidder, collector, reserve, price, and one sale per lot.
-- `BEGIN IMMEDIATE` serializes the read/check/write portions of bidding, auction opening and lot closure. Failure rolls the whole operation back; repeated closure returns the existing outcome.
-- Opening requires available artworks and at least one draft lot. Closing creates/reuses the matching collector, inserts the sale only if the reserve is met, updates lot/artwork status, and closes the auction when every lot is finished.
-- Parameterized values and an allow-list of table/column identifiers protect management routes. CSRF tokens protect POST actions; user roles are checked on the server. Session cookies use HttpOnly and SameSite=Lax. The local session secret is generated under `instance/.secret`.
+## Migration and persistence
 
-### Reports
+The one-time migration copied **77 rows across all 17 application tables**, including password hashes, into Oracle, with exact count checks. `scripts/migrate_sqlite_once.py` opened the source read-only and verified its SHA-256 remained unchanged. It refuses to replace an Oracle schema that has presentation activity and records completion in an ignored local marker. Do not rerun migration as a reset tool.
 
-`atelier/queries.py` contains six SELECT presets: collection joins, exhibition lineups, lot bid aggregation, gallery revenue, collector spending, and missing assessments. LEFT JOIN preserves empty relationships; conditional SUM counts only completed payments; NOT EXISTS finds missing assessments without multiplying historical rows.
-
-Initial completed-payment revenue is ₹55,000 for Atelier Mumbai and ₹0 for Atelier Delhi. Maya has spent ₹55,000; Arjun's pending ₹45,000 does not contribute to completed spending.
+`instance/atelier.sqlite` is an unchanged historical backup, not an active database. Original SQLite SQL and legacy source/tests are preserved under `atelier/schema.sql`, `docs/SQL_EXPLAINED.sql` and `docs/legacy-sqlite/`. They are not used by the application. The active Oracle data lives in the local XE instance; the provided scripts recreate the fictional baseline on another compatible Oracle installation.
 
 ## Verification
 
+The completed Oracle checks and captured outputs are already included. To deliberately run another fictional presentation and refresh evidence:
+
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe scripts\verify_oracle.py
+.\.venv\Scripts\python.exe scripts\check_oracle_transactions.py
+.\.venv\Scripts\python.exe scripts\build_assignment_report.py
 ```
 
-Tests use isolated temporary databases, leaving the delivered fixture unchanged. Coverage includes accounts and roles, CSRF rejection, staff CRUD and preset reports, full presentation flow, seeding idempotency, restart persistence, date/money/reference constraints, immutable history, reserve failure, rollback and concurrent bidding/closure. Visual review covers public/staff pages, mobile layout and reduced motion.
-
-Asset prompts and built-in generation provenance are recorded in `docs/asset-prompts.md`. Original final assets live in `atelier/static/images/`; the application does not fetch images from remote sites.
+These commands create clearly named fictional demonstration history in Oracle. They never reset data. Verification covers real account authentication/roles, public/staff pages, all 40 individual statements, DDL/TCL and extra SELECTs, the entire sale workflow, invalid bids, concurrent equal bids, concurrent closure, reserve failure, injected rollback and persistence across independent connections. The archived SQLite tests are not Oracle evidence.

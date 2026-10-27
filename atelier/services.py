@@ -1,4 +1,4 @@
-import sqlite3
+from .db import IntegrityError
 from contextlib import contextmanager
 
 
@@ -8,13 +8,11 @@ class DomainError(ValueError):
 
 @contextmanager
 def _transaction(conn):
-    if conn.in_transaction:
-        raise DomainError('Finish the current transaction before this operation')
     try:
-        conn.execute('BEGIN IMMEDIATE')
         yield
-        conn.commit()
-    except sqlite3.IntegrityError as exc:
+        if not getattr(conn, 'defer_commit', False):
+            conn.commit()
+    except IntegrityError as exc:
         conn.rollback()
         raise DomainError(str(exc)) from exc
     except Exception:
@@ -22,9 +20,16 @@ def _transaction(conn):
         raise
 
 
+def _lock_auction_for_lot(conn, lot_id):
+    row = conn.execute('SELECT auction_id FROM auction_lot WHERE lot_id=?', (lot_id,)).fetchone()
+    if row is None:
+        raise DomainError('Lot not found')
+    conn.execute('SELECT auction_id FROM auction WHERE auction_id=? FOR UPDATE', (row['auction_id'],)).fetchone()
+
+
 def open_auction(conn, auction_id):
     with _transaction(conn):
-        auction = conn.execute('SELECT status FROM auction WHERE auction_id=?', (auction_id,)).fetchone()
+        auction = conn.execute('SELECT status FROM auction WHERE auction_id=? FOR UPDATE', (auction_id,)).fetchone()
         if auction is None:
             raise DomainError('Auction not found')
         if auction['status'] != 'draft':
@@ -32,8 +37,9 @@ def open_auction(conn, auction_id):
         lots = conn.execute('SELECT l.lot_id, l.artwork_id, l.status, w.status AS artwork_status FROM auction_lot l JOIN artwork w ON w.artwork_id=l.artwork_id WHERE l.auction_id=?', (auction_id,)).fetchall()
         if not lots:
             raise DomainError('Add at least one lot before opening the auction')
-        for lot in lots:
-            if lot['status'] != 'draft' or lot['artwork_status'] != 'available' or conn.execute("SELECT 1 FROM auction_lot WHERE artwork_id=? AND status='open'", (lot['artwork_id'],)).fetchone():
+        for lot in sorted(lots, key=lambda item:item['artwork_id']):
+            artwork = conn.execute('SELECT status FROM artwork WHERE artwork_id=? FOR UPDATE', (lot['artwork_id'],)).fetchone()
+            if lot['status'] != 'draft' or artwork['status'] != 'available' or conn.execute("SELECT 1 FROM auction_lot WHERE artwork_id=? AND status='open'", (lot['artwork_id'],)).fetchone():
                 raise DomainError('Every artwork must be available and not listed in another open lot')
         conn.execute("UPDATE auction SET status='open' WHERE auction_id=?", (auction_id,))
         for lot in lots:
@@ -45,7 +51,8 @@ def place_bid(conn, lot_id, bidder_id, amount):
     if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
         raise DomainError('Bid amount must be a non-negative integer in paise')
     with _transaction(conn):
-        row = conn.execute('SELECT l.status, l.starting_price, a.status AS auction_status FROM auction_lot l JOIN auction a ON a.auction_id=l.auction_id WHERE l.lot_id=?', (lot_id,)).fetchone()
+        _lock_auction_for_lot(conn, lot_id)
+        row = conn.execute('SELECT l.status, l.starting_price, a.status AS auction_status FROM auction_lot l JOIN auction a ON a.auction_id=l.auction_id WHERE l.lot_id=? FOR UPDATE OF l.status', (lot_id,)).fetchone()
         if not row or row['status'] != 'open' or row['auction_status'] != 'open':
             raise DomainError('This lot is not open for bidding')
         if not conn.execute('SELECT 1 FROM bidder WHERE bidder_id=?', (bidder_id,)).fetchone():
@@ -60,7 +67,8 @@ def place_bid(conn, lot_id, bidder_id, amount):
 
 def close_lot(conn, lot_id):
     with _transaction(conn):
-        lot = conn.execute('SELECT l.*, a.status AS auction_status FROM auction_lot l JOIN auction a ON a.auction_id=l.auction_id WHERE l.lot_id=?', (lot_id,)).fetchone()
+        _lock_auction_for_lot(conn, lot_id)
+        lot = conn.execute('SELECT l.*, a.status AS auction_status FROM auction_lot l JOIN auction a ON a.auction_id=l.auction_id WHERE l.lot_id=? FOR UPDATE OF l.status', (lot_id,)).fetchone()
         if lot is None:
             raise DomainError('Lot not found')
         if lot['status'] in ('sold','unsold'):
@@ -68,13 +76,17 @@ def close_lot(conn, lot_id):
             return {'status': lot['status'], 'sale_id': sale['sale_id'] if sale else None}
         if lot['status'] != 'open' or lot['auction_status'] != 'open':
             raise DomainError('Only an open lot can be closed')
-        winner = conn.execute('SELECT * FROM bid WHERE lot_id=? ORDER BY bid_amount DESC, bid_id DESC LIMIT 1', (lot_id,)).fetchone()
+        winner = conn.execute('SELECT * FROM (SELECT * FROM bid WHERE lot_id=? ORDER BY bid_amount DESC, bid_id DESC) WHERE ROWNUM=1', (lot_id,)).fetchone()
         sale_id = None
         status = 'unsold'
         if winner and winner['bid_amount'] >= lot['reserve_price']:
-            conn.execute('INSERT INTO collector(bidder_id,name,email,phone,address) SELECT bidder_id,name,email,phone,address FROM bidder WHERE bidder_id=? ON CONFLICT(bidder_id) DO NOTHING', (winner['bidder_id'],))
+            buyer = conn.execute('SELECT * FROM bidder WHERE bidder_id=? FOR UPDATE', (winner['bidder_id'],)).fetchone()
             collector = conn.execute('SELECT collector_id FROM collector WHERE bidder_id=?', (winner['bidder_id'],)).fetchone()
-            sale_id = conn.execute("INSERT INTO sale(bid_id,collector_id,sale_price,sale_date,payment_status) VALUES(?,?,?,date('now'),'pending')", (winner['bid_id'],collector['collector_id'],winner['bid_amount'])).lastrowid
+            if collector is None:
+                conn.execute('INSERT INTO collector(bidder_id,name,email,phone,address) VALUES(?,?,?,?,?)',
+                             (buyer['bidder_id'],buyer['name'],buyer['email'],buyer['phone'],buyer['address']))
+                collector = conn.execute('SELECT collector_id FROM collector WHERE bidder_id=?', (winner['bidder_id'],)).fetchone()
+            sale_id = conn.execute("INSERT INTO sale(bid_id,collector_id,sale_price,sale_date,payment_status) VALUES(?,?,?,TRUNC(SYSDATE),'pending')", (winner['bid_id'],collector['collector_id'],winner['bid_amount'])).lastrowid
             status = 'sold'
         conn.execute('UPDATE auction_lot SET status=? WHERE lot_id=?', (status, lot_id))
         conn.execute('UPDATE artwork SET status=? WHERE artwork_id=?', ('sold' if status=='sold' else 'available', lot['artwork_id']))

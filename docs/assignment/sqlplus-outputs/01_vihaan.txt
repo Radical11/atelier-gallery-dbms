@@ -1,0 +1,256 @@
+
+PL/SQL procedure successfully completed.
+
+
+PL/SQL procedure successfully completed.
+
+
+1 row created.
+
+
+Commit complete.
+
+
+ARTWORK_ID  ARTIST_ID
+---------- ----------
+TITLE
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+YEAR_CREATED
+------------
+MEDIUM
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+DIMENSIONS
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+DESCRIPTION
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+STATUS
+--------------------
+IMAGE_PATH
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    100124	    1
+Study in Light
+
+
+
+
+available
+
+
+
+1 row selected.
+
+
+PL/SQL procedure successfully completed.
+
+
+1 row updated.
+
+
+Commit complete.
+
+
+ARTWORK_ID  ARTIST_ID
+---------- ----------
+TITLE
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+YEAR_CREATED
+------------
+MEDIUM
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+DIMENSIONS
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+DESCRIPTION
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+STATUS
+--------------------
+IMAGE_PATH
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    100124	    1
+Study in Light revised
+
+
+
+
+available
+
+
+
+1 row selected.
+
+
+1 row deleted.
+
+
+Commit complete.
+
+
+no rows selected
+
+
+ARTWORK_ID
+----------
+TITLE
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+MEDIUM
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	 1
+Monsoon Reverie
+Oil on canvas
+
+	 2
+A Quiet Morning
+Acrylic on canvas
+
+	 3
+Blue Distance
+Oil on linen
+
+	 4
+The Golden Hour
+Mixed media
+
+	 5
+Garden of Echoes
+Acrylic on canvas
+
+	 6
+Between Tides
+Oil on canvas
+
+	 7
+Window to the City
+Watercolour
+
+	 8
+Soft Horizons
+Oil on linen
+
+	 9
+A Place to Begin
+Mixed media
+
+	10
+Wild Geometry
+Acrylic on canvas
+
+	11
+Evening Passage
+Oil on canvas
+
+	12
+The Light Within
+Watercolour
+
+    100093
+Transaction demonstration 100092 / 1
+Oil on canvas
+
+    100075
+Presentation Study 100075
+Oil on canvas
+
+    100095
+Transaction demonstration 100094 / 2
+Oil on canvas
+
+
+15 rows selected.
+
+
+TITLE
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+NAME
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monsoon Reverie
+Amara Sen
+
+A Place to Begin
+Amara Sen
+
+Transaction demonstration 100092 / 1
+Amara Sen
+
+Presentation Study 100075
+Amara Sen
+
+Transaction demonstration 100094 / 2
+Amara Sen
+
+A Quiet Morning
+Kavita Rao
+
+Window to the City
+Kavita Rao
+
+Blue Distance
+Isabelle Laurent
+
+Soft Horizons
+Isabelle Laurent
+
+The Golden Hour
+Noah Kim
+
+The Light Within
+Noah Kim
+
+Garden of Echoes
+Leila Haddad
+
+Wild Geometry
+Leila Haddad
+
+Between Tides
+Mateo Alvarez
+
+Evening Passage
+Mateo Alvarez
+
+
+15 rows selected.
+
+
+ ARTIST_ID TOTAL_ARTWORKS
+---------- --------------
+	 1		5
+	 2		2
+	 3		2
+	 4		2
+	 5		2
+	 6		2
+
+6 rows selected.
+
+
+TITLE
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monsoon Reverie
+A Place to Begin
+Transaction demonstration 100092 / 1
+Presentation Study 100075
+Transaction demonstration 100094 / 2
+A Quiet Morning
+Window to the City
+
+7 rows selected.
+
+
+TITLE_IN_CAPITALS
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+MONSOON REVERIE
+A QUIET MORNING
+BLUE DISTANCE
+THE GOLDEN HOUR
+GARDEN OF ECHOES
+BETWEEN TIDES
+WINDOW TO THE CITY
+SOFT HORIZONS
+A PLACE TO BEGIN
+WILD GEOMETRY
+EVENING PASSAGE
+THE LIGHT WITHIN
+TRANSACTION DEMONSTRATION 100092 / 1
+PRESENTATION STUDY 100075
+TRANSACTION DEMONSTRATION 100094 / 2
+
+15 rows selected.

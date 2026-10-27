@@ -1,0 +1,3 @@
+-r requirements.txt
+# 3.0 retains support for the installed Oracle 11.2 client and Python 3.13.
+oracledb==3.0.0

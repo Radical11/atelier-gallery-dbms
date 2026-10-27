@@ -1,0 +1,13 @@
+{
+  "engine": "Oracle",
+  "checks": [
+    "artist: actual staff form insert, edit and delete passed",
+    "artwork: actual staff form insert, edit and delete passed",
+    "exhibition: actual staff form insert, edit and delete passed",
+    "auction: actual staff form insert, edit and delete passed",
+    "appraisal: actual staff form insert, edit and delete passed",
+    "Reversed exhibition dates rejected through staff form",
+    "Missing CSRF rejected",
+    "Existing date forms, Oracle collection search, walkthrough and evidence download render"
+  ]
+}

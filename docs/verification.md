@@ -1,3 +1,7 @@
+# Historical SQLite verification
+
+This document predates the Oracle migration. Current Oracle evidence is in `docs/assignment/`; do not interpret earlier SQLite results as verification of the running backend.
+
 # Verification — 27 October 2026
 
 The tested story runs from the rendered website through authenticated Flask POST routes, transactional SQLite changes, and the resulting account and SQL report screens.
@@ -47,3 +51,19 @@ The eight-step guided demo was also run from start to completion through the act
 Interactive frame checks: native dialog opening, manual tilt/rotation, Escape closing and focus return, persisted effects preference, touch behavior, and reduced-motion handling. New controls meet a 44px minimum touch target. Screenshots include `work/screenshots/3d-viewer.png` and `3d-mobile-viewer.png`.
 
 At 390px, the new database explorer's document width and scroll width were both 390px. Its two data tables scroll within 354px containers rather than expanding the page.
+
+## Inline dimensional artwork update
+
+The separate inspection buttons and modal viewer have been removed. The frames now interact directly inside the normal gallery, auction and artwork pages. Four actual side planes connect to a raised front face and mat. The frame assembly retains `transform-style: preserve-3d` with `filter: none`; shadows are applied outside that assembly so they do not flatten the geometry.
+
+Browser checks verified a visible projected side edge, cursor tilt, direct artwork dragging, arrow-key rotation and Home reset. Ordinary artwork links continue to navigate. The gallery camera responds to pointer movement and its paintings and foreground objects occupy distinct depth planes. Mobile and reduced-motion modes disable automatic camera movement; manual detail controls remain available.
+
+The 390px layout had no horizontal page overflow, and no inspector buttons or dialog remained in the DOM. The 22-test application suite passed after the template changes. Current previews: `work/screenshots/inline-3d-home.png`, `inline-3d-detail.png`, `inline-3d-side.png` and `inline-3d-mobile.png`.
+
+## Grab-and-drag movement correction
+
+The homepage scene container intercepted pointer hits on its paintings. The container now ignores pointer hits while its movable children receive them explicitly. Paintings and sculptures now support actual position changes, rather than only hover tilt. Collection frames are movable as well. Dragging suppresses the artwork link only for that drag; ordinary clicks retain navigation. Reset controls and keyboard movement are available.
+
+Actual browser mouse drags moved the first painting −70/−40 pixels, the second −70/+40 pixels, and the bust +40/−35 pixels without navigating away. Reset restored all scene positions; a keyboard arrow moved the bust 12 pixels; clicking a painting opened its normal record. On the detail page, a vertical mouse drag moved the frame 50 pixels, arrow-key rotation changed its angle, and Reset frame cleared both values. The web suite passed all 7 tests and both JavaScript files passed syntax checks.
+
+Responsive check: at 390px, page width and scroll width matched. Real touch-event injection was unavailable in the in-app test browser; touch interaction is therefore not claimed as physically verified. All temporary browser emulation overrides were cleared.

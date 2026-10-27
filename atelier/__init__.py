@@ -19,7 +19,7 @@ def create_app(test_config=None):
         secret = secret_path.read_text(encoding='utf-8').strip()
     app.config.from_mapping(
         SECRET_KEY=secret,
-        DATABASE=str(Path(app.instance_path) / 'atelier.sqlite'),
+        DATABASE_ENGINE='oracle',
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE='Lax',
         MAX_CONTENT_LENGTH=1_000_000,
@@ -35,40 +35,13 @@ def create_app(test_config=None):
     from .presentation import bp as presentation_bp
     app.register_blueprint(presentation_bp)
     app.jinja_env.filters['money'] = money
-    with app.app_context():
-        conn = db.get_db()
-        if not conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='artist'").fetchone():
-            db.init_db(conn)
-            from .seed import seed_db
-            seed_db(conn)
-
-    @app.cli.command('seed')
-    def seed_command():
-        """Add the demonstration fixture if it has not been seeded."""
-        from .seed import seed_db
-        seed_db(db.get_db())
-        click.echo('Demo seed checked. Existing records are preserved.')
-
-    @app.cli.command('reset-demo')
-    @click.option('--yes', is_flag=True, help='Confirm replacing ALL local demo data.')
-    def reset_command(yes):
-        """Explicitly replace the local database with its original demonstration."""
-        if not yes:
-            click.confirm('Replace ALL records in this local demo database?', abort=True)
-        conn = db.get_db()
-        conn.close()
-        from flask import g
-        g.pop('db', None)
-        database_path = Path(app.config['DATABASE'])
-        for suffix in ('', '-wal', '-shm'):
-            target = Path(str(database_path) + suffix)
-            if target.exists():
-                target.unlink()
-        conn = db.get_db()
-        db.init_db(conn)
-        from .seed import seed_db
-        seed_db(conn)
-        click.echo('Original demo restored.')
+    @app.cli.command('oracle-check')
+    def oracle_check():
+        """Check the configured Oracle connection without changing records."""
+        with app.app_context():
+            conn = db.get_db()
+            row = conn.execute("SELECT USER AS schema_name FROM dual").fetchone()
+            click.echo(f"Oracle {conn.raw.version} / {row['schema_name']}")
 
     @app.errorhandler(404)
     def not_found(error):

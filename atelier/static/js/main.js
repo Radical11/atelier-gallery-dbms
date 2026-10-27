@@ -1,7 +1,7 @@
 (() => {
-  if (location.hash === '#demo-result') {
+  if (location.hash === '#demo-result' || location.hash === '#latest-result') {
     const heading = document.querySelector('#result-title');
-    if (heading) { heading.tabIndex = -1; heading.focus({preventScroll:true}); }
+    if (heading) { heading.tabIndex = -1; heading.focus(); }
   }
   const menu = document.querySelector('.menu-toggle');
   const nav = document.querySelector('#main-nav');
@@ -38,15 +38,21 @@
   const finePointer = window.matchMedia('(pointer: fine)');
   const motionToggle = document.querySelector('[data-motion-toggle]');
   let effects;
-  try { const saved = localStorage.getItem('atelier-3d-effects'); effects = saved === null ? !motion.matches : saved === 'on'; }
-  catch { effects = !motion.matches; }
+  try {
+    const saved = localStorage.getItem('atelier-3d-effects');
+    effects = saved === null ? !motion.matches : saved === 'on';
+  } catch { effects = !motion.matches; }
+
+  const surfaces = [...document.querySelectorAll('[data-tilt], .art-detail-image')];
+  const resets = [];
+  const enabled = () => effects && !motion.matches;
   const syncEffects = () => {
-    document.documentElement.classList.toggle('effects-on', effects && !motion.matches);
+    document.documentElement.classList.toggle('effects-on', enabled());
     if (motionToggle) {
       motionToggle.setAttribute('aria-pressed', String(effects));
-      motionToggle.textContent = `3D effects: ${effects ? (motion.matches ? 'On (motion paused)' : 'On') : 'Off'}`;
-      motionToggle.title = motion.matches ? 'Automatic movement is paused by your reduced-motion preference.' : 'Toggle automatic 3D effects';
+      motionToggle.textContent = `3D effects: ${effects ? (motion.matches ? 'Paused' : 'On') : 'Off'}`;
     }
+    if (!enabled()) resets.forEach(reset => reset());
   };
   if (motionToggle) {
     motionToggle.hidden = false;
@@ -57,84 +63,99 @@
     });
   }
   motion.addEventListener('change', syncEffects);
-  syncEffects();
+  finePointer.addEventListener('change', () => { if (!finePointer.matches) resets.forEach(reset => reset()); });
 
-  const viewer = document.querySelector('.art-viewer');
-  if (viewer && typeof viewer.showModal === 'function') {
-    const image = viewer.querySelector('[data-viewer-image]');
-    const title = viewer.querySelector('#viewer-title');
-    const frame = viewer.querySelector('[data-viewer-frame]');
-    const close = viewer.querySelector('[data-viewer-close]');
-    let opener = null, x = 0, y = 0, dragging = null;
-    const render = () => {
-      frame.style.setProperty('--view-x', `${x}deg`);
-      frame.style.setProperty('--view-y', `${y}deg`);
+  // Decorative images and linked frames never become Chrome drag previews.
+  document.querySelectorAll('img').forEach(image => {
+    image.draggable = false;
+    image.addEventListener('dragstart', event => event.preventDefault());
+  });
+  document.querySelectorAll('.hero, .art-image, .art-card-image, .exhibition-image, .event-detail-image').forEach(surface => {
+    surface.draggable = false;
+    surface.addEventListener('dragstart', event => event.preventDefault());
+    surface.addEventListener('selectstart', event => event.preventDefault());
+  });
+
+  surfaces.forEach(surface => {
+    let box, frame = 0, pointer = {x:0,y:0};
+    const draw = () => {
+      frame = 0;
+      if (!enabled()) return;
+      surface.style.setProperty('--tilt-x', `${-pointer.y * 3}deg`);
+      surface.style.setProperty('--tilt-y', `${pointer.x * 4}deg`);
+      surface.style.setProperty('--hover-z', '10px');
+      surface.style.setProperty('--pointer-x', `${(pointer.x + 1) * 50}%`);
+      surface.style.setProperty('--pointer-y', `${(pointer.y + 1) * 50}%`);
     };
-    document.querySelectorAll('[data-inspect]').forEach(button => {
-      button.hidden = false;
-      button.addEventListener('click', () => {
-        opener = button;
-        title.textContent = button.dataset.title;
-        image.alt = button.dataset.title;
-        image.hidden = false;
-        image.src = button.dataset.image;
-        x = 0; y = 0; render();
-        viewer.showModal();
-        close.focus();
-      });
+    const reset = () => {
+      cancelAnimationFrame(frame); frame = 0;
+      surface.classList.remove('is-hovered','is-focused');
+      surface.style.setProperty('--tilt-x','0deg');
+      surface.style.setProperty('--tilt-y','0deg');
+      surface.style.setProperty('--hover-z','0px');
+      surface.style.setProperty('--pointer-x','50%');
+      surface.style.setProperty('--pointer-y','50%');
+    };
+    resets.push(reset);
+    surface.addEventListener('pointerenter', event => {
+      if (event.pointerType === 'touch' || !finePointer.matches || !enabled()) return;
+      box = surface.getBoundingClientRect();
+      surface.classList.add('is-hovered');
     });
-    image.addEventListener('error', () => { image.hidden = true; });
-    close.addEventListener('click', () => viewer.close());
-    viewer.addEventListener('close', () => { if (opener && opener.isConnected) opener.focus(); });
-    viewer.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
-      const action = button.dataset.view;
-      if (action === 'left') y = Math.max(-35, y - 10);
-      if (action === 'right') y = Math.min(35, y + 10);
-      if (action === 'up') x = Math.max(-25, x - 10);
-      if (action === 'down') x = Math.min(25, x + 10);
-      if (action === 'reset') { x = 0; y = 0; }
-      render();
-    }));
-    frame.addEventListener('pointerdown', event => {
-      dragging = {startX: event.clientX, startY: event.clientY, x, y};
-      frame.setPointerCapture(event.pointerId);
-      frame.classList.add('dragging');
+    surface.addEventListener('pointermove', event => {
+      if (event.pointerType === 'touch' || !finePointer.matches || !enabled()) return;
+      box ||= surface.getBoundingClientRect();
+      pointer.x = Math.max(-1,Math.min(1,(event.clientX-box.left)/box.width*2-1));
+      pointer.y = Math.max(-1,Math.min(1,(event.clientY-box.top)/box.height*2-1));
+      if (!frame) frame = requestAnimationFrame(draw);
     });
-    frame.addEventListener('pointermove', event => {
-      if (!dragging) return;
-      y = Math.max(-35, Math.min(35, dragging.y + (event.clientX - dragging.startX) / 4));
-      x = Math.max(-25, Math.min(25, dragging.x - (event.clientY - dragging.startY) / 4));
-      render();
+    surface.addEventListener('pointerleave', () => { box = null; reset(); });
+    surface.addEventListener('focusin', () => {
+      if (!enabled()) return;
+      surface.classList.add('is-focused');
+      pointer = {x:-0.35,y:-0.25};
+      if (!frame) frame = requestAnimationFrame(draw);
     });
-    const stopDrag = () => { dragging = null; frame.classList.remove('dragging'); };
-    frame.addEventListener('pointerup', stopDrag);
-    frame.addEventListener('pointercancel', stopDrag);
-  }
+    surface.addEventListener('focusout', reset);
+  });
 
   const hero = document.querySelector('.hero');
   const scene = document.querySelector('[data-parallax]');
-  if (hero && scene && finePointer.matches) {
+  if (hero && scene) {
+    let animation = 0, bounds, target = {x:0,y:0}, camera = {x:0,y:0};
+    const render = () => {
+      camera.x += (target.x-camera.x)*0.12;
+      camera.y += (target.y-camera.y)*0.12;
+      scene.style.setProperty('--camera-x',`${camera.x}deg`);
+      scene.style.setProperty('--camera-y',`${camera.y}deg`);
+      if (Math.abs(target.x-camera.x)+Math.abs(target.y-camera.y)>0.015) animation=requestAnimationFrame(render);
+      else animation=0;
+    };
+    const reset = () => {
+      cancelAnimationFrame(animation); animation=0;
+      target={x:0,y:0}; camera={x:0,y:0};
+      scene.style.setProperty('--camera-x','0deg');
+      scene.style.setProperty('--camera-y','0deg');
+      hero.style.setProperty('--light-x','50%');
+      hero.style.setProperty('--light-y','50%');
+    };
+    resets.push(reset);
+    hero.addEventListener('pointerenter', () => { bounds=hero.getBoundingClientRect(); });
     hero.addEventListener('pointermove', event => {
-      if (event.pointerType === 'touch' || motion.matches || !effects) return;
-      const box = hero.getBoundingClientRect();
-      scene.style.setProperty('--px', `${((event.clientX - box.left) / box.width - .5) * 12}px`);
-      scene.style.setProperty('--py', `${((event.clientY - box.top) / box.height - .5) * 8}px`);
+      if (event.pointerType==='touch' || !finePointer.matches || !enabled() || hero.classList.contains('webgl-ready')) return;
+      bounds ||= hero.getBoundingClientRect();
+      const x=Math.max(0,Math.min(1,(event.clientX-bounds.left)/bounds.width));
+      const y=Math.max(0,Math.min(1,(event.clientY-bounds.top)/bounds.height));
+      target={x:(0.5-y)*10,y:(x-0.5)*16};
+      hero.style.setProperty('--light-x',`${x*100}%`);
+      hero.style.setProperty('--light-y',`${y*100}%`);
+      if (!animation) animation=requestAnimationFrame(render);
     });
     hero.addEventListener('pointerleave', () => {
-      scene.style.setProperty('--px', '0px');
-      scene.style.setProperty('--py', '0px');
+      target={x:0,y:0}; bounds=null;
+      if (!animation) animation=requestAnimationFrame(render);
     });
   }
-  document.querySelectorAll('[data-tilt]').forEach(frame => {
-    frame.addEventListener('pointermove', event => {
-      if (event.pointerType === 'touch' || !finePointer.matches || motion.matches || !effects) return;
-      const box = frame.getBoundingClientRect();
-      frame.style.setProperty('--tilt-x', `${(0.5 - (event.clientY - box.top) / box.height) * 8}deg`);
-      frame.style.setProperty('--tilt-y', `${((event.clientX - box.left) / box.width - 0.5) * 8}deg`);
-    });
-    frame.addEventListener('pointerleave', () => {
-      frame.style.setProperty('--tilt-x', '0deg');
-      frame.style.setProperty('--tilt-y', '0deg');
-    });
-  });
+  window.addEventListener('blur', () => resets.forEach(reset => reset()));
+  syncEffects();
 })();

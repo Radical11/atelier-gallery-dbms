@@ -1,6 +1,6 @@
 """Public browsing, authenticated demonstration actions and the staff data desk."""
 from functools import wraps
-import sqlite3
+from . import db as database_errors
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
@@ -75,21 +75,21 @@ ART = '''SELECT w.*, a.name AS artist_name, a.nationality AS artist_nationality
          FROM artwork w JOIN artist a ON a.artist_id=w.artist_id'''
 EXHIBITIONS = '''SELECT e.*, g.name AS gallery_name, g.city, c.name AS curator_name,
     (SELECT COUNT(*) FROM exhibition_artwork ea WHERE ea.exhibition_id=e.exhibition_id) AS artwork_count,
-    COALESCE((SELECT w.image_path FROM exhibition_artwork ea JOIN artwork w ON w.artwork_id=ea.artwork_id
-    WHERE ea.exhibition_id=e.exhibition_id ORDER BY ea.display_position LIMIT 1), 'images/artwork-04.webp') AS image_path
+    COALESCE((SELECT MAX(w.image_path) KEEP (DENSE_RANK FIRST ORDER BY ea.display_position) FROM exhibition_artwork ea JOIN artwork w ON w.artwork_id=ea.artwork_id
+    WHERE ea.exhibition_id=e.exhibition_id), 'images/artwork-04.webp') AS image_path
     FROM exhibition e JOIN gallery g ON g.gallery_id=e.gallery_id JOIN curator c ON c.curator_id=e.curator_id'''
 AUCTIONS = '''SELECT a.*, g.name AS gallery_name,
     (SELECT COUNT(*) FROM auction_lot l WHERE l.auction_id=a.auction_id) AS lot_count,
-    COALESCE((SELECT w.image_path FROM auction_lot l JOIN artwork w ON w.artwork_id=l.artwork_id
-    WHERE l.auction_id=a.auction_id ORDER BY l.lot_number LIMIT 1), 'images/artwork-03.webp') AS image_path
+    COALESCE((SELECT MAX(w.image_path) KEEP (DENSE_RANK FIRST ORDER BY l.lot_number) FROM auction_lot l JOIN artwork w ON w.artwork_id=l.artwork_id
+    WHERE l.auction_id=a.auction_id), 'images/artwork-03.webp') AS image_path
     FROM auction a JOIN gallery g ON g.gallery_id=a.gallery_id'''
 
 
 @bp.route('/')
 def home():
-    return render_template('home.html', featured=rows(ART+' ORDER BY w.artwork_id LIMIT 6'),
-        exhibitions=rows(EXHIBITIONS+' ORDER BY e.exhibition_id LIMIT 3'),
-        auctions=rows(AUCTIONS+" ORDER BY CASE a.status WHEN 'open' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END LIMIT 3"),
+    return render_template('home.html', featured=rows('SELECT * FROM ('+ART+' ORDER BY w.artwork_id) WHERE ROWNUM<=6'),
+        exhibitions=rows('SELECT * FROM ('+EXHIBITIONS+' ORDER BY e.exhibition_id) WHERE ROWNUM<=3'),
+        auctions=rows("SELECT * FROM ("+AUCTIONS+" ORDER BY CASE a.status WHEN 'open' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END) WHERE ROWNUM<=3"),
         stats={key:get_db().execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0] for key,table in
                [('artworks','artwork'),('artists','artist'),('exhibitions','exhibition'),('auctions','auction')]})
 
@@ -207,9 +207,9 @@ def bid(lot_id):
     try:
         services.place_bid(get_db(),lot_id,g.user['bidder_id'],paise(request.form.get('amount','')))
         flash('Your bid has been placed. You are now the highest bidder.','success')
-    except (ValueError,services.DomainError,sqlite3.IntegrityError) as error:
+    except (ValueError,services.DomainError,database_errors.IntegrityError) as error:
         flash(str(error),'error')
-    except sqlite3.OperationalError:
+    except database_errors.OperationalError:
         flash('The bidding room is busy. Refresh and try your bid again.','error')
     return redirect(url_for('web.auction_detail',auction_id=lot['auction_id'])+f'#lot-{lot_id}')
 
@@ -221,7 +221,7 @@ def open_auction(auction_id):
     try:
         services.open_auction(get_db(),auction_id)
         flash('The auction is open for bidding.','success')
-    except (services.DomainError,sqlite3.IntegrityError) as error:
+    except (services.DomainError,database_errors.IntegrityError) as error:
         flash(str(error),'error')
     return redirect(url_for('web.auction_detail',auction_id=auction_id))
 
@@ -234,7 +234,7 @@ def close_lot(lot_id):
         result=services.close_lot(get_db(),lot_id)
         flash('Lot sold. Its winning bid and collector are recorded.' if result['status']=='sold'
               else 'Lot closed unsold. No qualifying reserve bid was received.','success')
-    except (services.DomainError,sqlite3.IntegrityError) as error:
+    except (services.DomainError,database_errors.IntegrityError) as error:
         flash(str(error),'error')
     return redirect(url_for('web.auction_detail',auction_id=lot['auction_id'])+f'#lot-{lot_id}')
 
@@ -246,7 +246,7 @@ def payment(sale_id):
     try:
         services.update_payment(get_db(),sale_id,request.form.get('status',''))
         flash('Payment status updated. Collector and revenue reports now reflect it.','success')
-    except (services.DomainError,sqlite3.IntegrityError) as error:
+    except (services.DomainError,database_errors.IntegrityError) as error:
         flash(str(error),'error')
     return redirect(url_for('web.admin_table',table='sale'))
 
@@ -255,10 +255,10 @@ def payment(sale_id):
 @require_role('staff')
 def admin():
     return render_template('admin/index.html',counts=[dict(label=v,table=k,value=get_db().execute(f'SELECT COUNT(*) FROM {k}').fetchone()[0]) for k,v in TABLES.items()],
-        recent_sales=rows('''SELECT s.*,w.title AS artwork_title,c.name AS collector_name,a.title AS auction_title
+        recent_sales=rows('''SELECT * FROM (SELECT s.*,w.title AS artwork_title,c.name AS collector_name,a.title AS auction_title
             FROM sale s JOIN bid b ON b.bid_id=s.bid_id JOIN auction_lot l ON l.lot_id=b.lot_id
             JOIN artwork w ON w.artwork_id=l.artwork_id JOIN collector c ON c.collector_id=s.collector_id
-            JOIN auction a ON a.auction_id=l.auction_id ORDER BY s.sale_id DESC LIMIT 5'''),
+            JOIN auction a ON a.auction_id=l.auction_id ORDER BY s.sale_id DESC) WHERE ROWNUM<=5'''),
         auctions=rows(AUCTIONS+' ORDER BY a.auction_id'))
 
 
@@ -301,11 +301,11 @@ def admin_table(table):
 
 def friendly_integrity(error):
     message=str(error)
-    if 'FOREIGN KEY' in message:
+    if 'FOREIGN KEY' in message or 'ORA-02291' in message or 'ORA-02292' in message:
         return 'This record is referenced elsewhere. Keep it to preserve its relationships and history.'
-    if 'UNIQUE constraint' in message:
+    if 'UNIQUE constraint' in message or 'ORA-00001' in message:
         return 'That combination already exists. Check the linked records, lot number, email, or certificate number.'
-    if 'CHECK constraint' in message:
+    if 'CHECK constraint' in message or 'ORA-02290' in message:
         return 'A database rule rejected this value. Check dates, amounts, status, and required relationships.'
     return message
 
@@ -332,16 +332,16 @@ def manage_form(table,key=None):
                     raise ValueError('A collector’s bidder identity cannot be reassigned.')
             with conn:
                 if row:
-                    assignments=','.join(f'{k}=?' for k in values)
+                    assignments=','.join(('"DATE"' if k=='date' else k)+'=?' for k in values)
                     conn.execute(f'UPDATE {table} SET {assignments} WHERE {where}',list(values.values())+parts)
                 else:
-                    names=','.join(values)
+                    names=','.join('"DATE"' if k=='date' else k for k in values)
                     placeholders=','.join('?' for _ in values)
                     conn.execute(f'INSERT INTO {table} ({names}) VALUES ({placeholders})',list(values.values()))
             flash(f'{TABLES[table]} record saved.','success')
             return redirect(url_for('web.admin_table',table=table))
-        except (ValueError,sqlite3.IntegrityError,sqlite3.OperationalError) as exc:
-            error=friendly_integrity(exc) if isinstance(exc,sqlite3.IntegrityError) else str(exc)
+        except (ValueError,database_errors.IntegrityError,database_errors.OperationalError) as exc:
+            error=friendly_integrity(exc) if isinstance(exc,database_errors.IntegrityError) else str(exc)
             flash(error,'error')
             fields=editable_fields(conn,table,row,request.form)
     return render_template('admin/form.html',title=('Edit ' if row else 'Add ')+TABLES[table].lower(),
@@ -373,8 +373,8 @@ def admin_delete(table,key):
         with get_db():
             get_db().execute(f'DELETE FROM {table} WHERE {where}',parts)
         flash('Record deleted.','success')
-    except (ValueError,sqlite3.IntegrityError) as error:
-        flash(friendly_integrity(error) if isinstance(error,sqlite3.IntegrityError) else str(error),'error')
+    except (ValueError,database_errors.IntegrityError) as error:
+        flash(friendly_integrity(error) if isinstance(error,database_errors.IntegrityError) else str(error),'error')
     return redirect(url_for('web.admin_table',table=table))
 
 

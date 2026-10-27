@@ -1,276 +1,261 @@
-"""Staff presentation studio: inspect the real schema and run an isolated live demo."""
+"""Oracle-backed individual assignment demonstrations and schema explorer."""
 import inspect
 import json
-from pathlib import Path
 import re
 import secrets
-import sqlite3
-import threading
-
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
-
+from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, Response
 from . import db, services
-from .seed import seed_db
-from .registry import TABLES
+from .assignment_queries import MODULES, EXTRA_SELECTS, find_module
+from .registry import TABLES, table_info
 from .web import require_role
 
 bp = Blueprint('presentation', __name__)
-_runner_lock = threading.RLock()
-STEPS = [
-    dict(title='Create an artwork', concept='INSERT · primary & foreign keys',
-         explanation='A new artwork receives its own primary key and references an existing artist. Its image comes from the original demo collection.'),
-    dict(title='Place it in an exhibition', concept='Many-to-many · composite key',
-         explanation='An associative row links the artwork to an exhibition. The composite primary key prevents the same pair appearing twice.'),
-    dict(title='Record the expert checks', concept='Normalized relationships',
-         explanation='Appraisal and authentication reference an expert ID. Expert names are joined from ART_EXPERT rather than duplicated in assessment records.'),
-    dict(title='Open the auction room', concept='Atomic transaction · state rules',
-         explanation='Create a draft auction and lot, then open them through the real auction service. The artwork must be available and may have only one active listing.'),
-    dict(title='Maya places a bid', concept='Validation · transaction',
-         explanation='Maya offers ₹65,000. SQLite validates the open lot and starting price; BEGIN IMMEDIATE protects the read/check/write operation.'),
-    dict(title='Sara bids higher', concept='Aggregation · bid history',
-         explanation='Sara offers ₹70,000. The highest bid changes while Maya’s accepted offer remains in the immutable bid history.'),
-    dict(title='Close the lot', concept='Winning bid · atomic sale',
-         explanation='The highest bid meets the ₹60,000 reserve. One transaction records Sara as collector, creates a sale, and updates the lot and artwork states.'),
-    dict(title='Complete the payment', concept='UPDATE · derived aggregate',
-         explanation='Mark the payment completed. Sara’s total spending is calculated from completed sales instead of stored as a duplicated collector attribute.'),
-]
-VIEWS = ('walkthrough', 'database', 'rules', 'architecture')
+FLOW_TITLES = ['Create an artwork','Assign it to an exhibition','Record expert assessments',
+               'Create and open an auction','Maya bids ₹65,000','Sara bids ₹70,000',
+               'Close the lot and record the sale','Complete payment and show revenue']
 
 
-def _directory():
-    directory = Path(current_app.config.get('PRESENTATION_DIR', Path(current_app.config['DATABASE']).parent / 'presentation'))
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory.resolve()
+def workspace():
+    token = session.get('oracle_workspace','')
+    if not isinstance(token,str) or not re.fullmatch(r'[a-f0-9]{32}',token):
+        token = secrets.token_hex(16)
+        session['oracle_workspace'] = token
+    return token
 
 
-def sandbox_path():
-    token = session.get('presentation_id', '')
-    if not isinstance(token, str) or not re.fullmatch(r'[a-f0-9]{32}', token):
-        return None
-    path = _directory() / f'{token}.sqlite'
-    return path if path.is_file() else None
+def result(conn, sql, binds=None):
+    cur=conn.execute(sql,binds or {})
+    records=cur.fetchall()
+    return dict(columns=[c[0] for c in cur.description],rows=[dict(r) for r in records[:200]],truncated=len(records)>200)
 
 
-def start_sandbox():
-    old = sandbox_path()
-    token = secrets.token_hex(16)
-    path = _directory() / f'{token}.sqlite'
-    conn = db.connect(path)
-    try:
-        db.init_db(conn)
-        seed_db(conn)
-        conn.executescript('''CREATE TABLE demo_state (
-            id INTEGER PRIMARY KEY CHECK(id=1), stage INTEGER NOT NULL,
-            artwork_id INTEGER, auction_id INTEGER, lot_id INTEGER, sale_id INTEGER);
-            INSERT INTO demo_state(id,stage) VALUES(1,0);
-            CREATE TABLE demo_event(stage INTEGER PRIMARY KEY, title TEXT NOT NULL,
-            sql_text TEXT NOT NULL, read_sql TEXT NOT NULL, before_json TEXT NOT NULL,
-            after_json TEXT NOT NULL, columns_json TEXT NOT NULL);''')
-    except Exception:
-        conn.close()
-        path.unlink(missing_ok=True)
-        raise
-    finally:
-        conn.close()
-    session['presentation_id'] = token
-    # Only delete the previous signed-session sandbox under the resolved presentation folder.
-    if old and old.parent.resolve() == _directory() and old != path:
-        old.unlink(missing_ok=True)
+def events(conn, token):
+    with conn.raw.cursor() as cur:
+        cur.execute('SELECT payload FROM lab_evidence WHERE workspace_id=:w ORDER BY evidence_id',w=token)
+        return [json.loads(row[0].read()) for row in cur]
 
 
-def _query(conn, stage, state):
-    artwork_id, auction_id, lot_id = state['artwork_id'], state['auction_id'], state['lot_id']
-    if stage == 1:
-        sql = 'SELECT artwork_id, title, artist_id, status FROM artwork ORDER BY artwork_id DESC LIMIT 3'
-        params = ()
-    elif stage == 2:
-        sql = '''SELECT e.title AS exhibition, w.title AS artwork, ea.display_position
-FROM exhibition_artwork ea JOIN exhibition e ON e.exhibition_id=ea.exhibition_id
-JOIN artwork w ON w.artwork_id=ea.artwork_id WHERE w.artwork_id=?'''
-        params = (artwork_id,)
-    elif stage == 3:
-        sql = '''SELECT w.title, e.name AS expert, p.estimated_value AS estimate_paise,
-t.certificate_no, t.result FROM artwork w
-LEFT JOIN appraisal p ON p.artwork_id=w.artwork_id
-LEFT JOIN art_expert e ON e.expert_id=p.expert_id
-LEFT JOIN authentication t ON t.artwork_id=w.artwork_id WHERE w.artwork_id=?'''
-        params = (artwork_id,)
-    elif stage == 4:
-        sql = '''SELECT a.title AS auction, a.status AS auction_status, l.lot_id,
-l.status AS lot_status, w.status AS artwork_status FROM auction a
-JOIN auction_lot l ON l.auction_id=a.auction_id
-JOIN artwork w ON w.artwork_id=l.artwork_id WHERE a.auction_id=?'''
-        params = (auction_id,)
-    elif stage in (5, 6):
-        sql = '''SELECT b.bid_id, r.name AS bidder, b.bid_amount AS amount_paise,
-b.bid_time FROM bid b JOIN bidder r ON r.bidder_id=b.bidder_id
-WHERE b.lot_id=? ORDER BY b.bid_amount DESC'''
-        params = (lot_id,)
-    elif stage == 7:
-        sql = '''SELECT l.lot_id, l.status AS lot_status, w.status AS artwork_status,
-s.sale_id, c.name AS buyer, s.sale_price AS price_paise, s.payment_status
-FROM auction_lot l JOIN artwork w ON w.artwork_id=l.artwork_id
-LEFT JOIN sale s ON s.bid_id=(SELECT b.bid_id FROM bid b
-WHERE b.lot_id=l.lot_id ORDER BY b.bid_amount DESC LIMIT 1)
-LEFT JOIN collector c ON c.collector_id=s.collector_id
-WHERE l.lot_id=?'''
-        params = (lot_id,)
-    else:
-        sql = '''SELECT c.name AS collector, s.payment_status,
-SUM(CASE WHEN s.payment_status='completed' THEN s.sale_price ELSE 0 END) AS spent_paise
-FROM collector c JOIN sale s ON s.collector_id=c.collector_id
-WHERE c.bidder_id=3 GROUP BY c.collector_id, s.payment_status'''
-        params = ()
-    cursor = conn.execute(sql, params)
-    return sql, [c[0] for c in cursor.description], [dict(r) for r in cursor]
-
-
-def _perform(conn, stage, state):
-    if stage == 1:
-        state['artwork_id'] = conn.execute('''INSERT INTO artwork
-            (artist_id,title,year_created,medium,dimensions,description,image_path)
-            VALUES(1,'A New Perspective',2026,'Oil on canvas','80 × 60 cm',
-            'A work created during the live presentation.','images/artwork-12.webp')''').lastrowid
-        conn.commit()
-    elif stage == 2:
-        conn.execute('INSERT INTO exhibition_artwork(exhibition_id,artwork_id,display_position) VALUES(3,?,?)',
-                     (state['artwork_id'], 'East wall · presentation'))
-        conn.commit()
-    elif stage == 3:
-        conn.execute("INSERT INTO appraisal(artwork_id,expert_id,appraisal_date,estimated_value,notes) VALUES(?,1,date('now'),9000000,'Live presentation assessment.')", (state['artwork_id'],))
-        conn.execute("INSERT INTO authentication(artwork_id,expert_id,certificate_no,authentication_date,result,notes) VALUES(?,1,'PRESENTATION-001',date('now'),'Authentic','Live presentation certificate.')", (state['artwork_id'],))
-        conn.commit()
-    elif stage == 4:
-        state['auction_id'] = conn.execute("INSERT INTO auction(gallery_id,title,date,venue,description) VALUES(1,'The Presentation Room',date('now'),'Atelier Mumbai','A live demonstration auction.')").lastrowid
-        state['lot_id'] = conn.execute('INSERT INTO auction_lot(auction_id,artwork_id,lot_number,starting_price,reserve_price) VALUES(?,?,1,5000000,6000000)', (state['auction_id'], state['artwork_id'])).lastrowid
-        conn.commit()
-        services.open_auction(conn, state['auction_id'])
-    elif stage == 5:
-        services.place_bid(conn, state['lot_id'], 1, 6500000)
-    elif stage == 6:
-        services.place_bid(conn, state['lot_id'], 3, 7000000)
-    elif stage == 7:
-        state['sale_id'] = services.close_lot(conn, state['lot_id'])['sale_id']
-    elif stage == 8:
-        services.update_payment(conn, state['sale_id'], 'completed')
-
-
-def run_step(expected_stage):
-    path = sandbox_path()
-    if path is None:
-        raise services.DomainError('Start a presentation demo first.')
-    with _runner_lock:
-        conn = db.connect(path)
-        staged = db.connect(':memory:')
-        try:
-            state = dict(conn.execute('SELECT * FROM demo_state WHERE id=1').fetchone())
-            if expected_stage != state['stage']:
-                raise services.DomainError('That step has already changed. The latest result is shown below.')
-            if state['stage'] >= len(STEPS):
-                raise services.DomainError('All steps are complete. Restart the demo to present it again.')
-            stage = state['stage'] + 1
-            # Stage a complete database snapshot, using the unmodified production services.
-            # Publishing the backup commits the step and its evidence together; a failed
-            # service or evidence write cannot leave the presentation halfway advanced.
-            conn.backup(staged)
-            _, _, before = _query(staged, stage, state)
-            trace = []
-            staged.set_trace_callback(trace.append)
-            _perform(staged, stage, state)
-            staged.set_trace_callback(None)
-            sql, columns, after = _query(staged, stage, state)
-            writes = list(dict.fromkeys(s for s in trace if re.match(r'\s*(INSERT|UPDATE|DELETE|BEGIN|COMMIT)', s, re.I)))
-            staged.execute('UPDATE demo_state SET stage=?, artwork_id=?, auction_id=?, lot_id=?, sale_id=? WHERE id=1',
-                           (stage,state['artwork_id'],state['auction_id'],state['lot_id'],state['sale_id']))
-            staged.execute('INSERT INTO demo_event VALUES(?,?,?,?,?,?,?)',
-                (stage,STEPS[stage-1]['title'],';\n\n'.join(writes),sql,json.dumps(before),json.dumps(after),json.dumps(columns)))
-            staged.commit()
-            staged.backup(conn)
-            return stage
-        finally:
-            staged.close()
-            conn.close()
-
-
-def walkthrough():
-    state, events = None, []
-    path = sandbox_path()
-    if path:
-        conn = db.connect(path)
-        try:
-            state = dict(conn.execute('SELECT * FROM demo_state WHERE id=1').fetchone())
-            for row in conn.execute('SELECT * FROM demo_event ORDER BY stage'):
-                item = dict(row)
-                for name in ('before','after','columns'):
-                    item[name] = json.loads(item.pop(name+'_json'))
-                events.append(item)
-        finally:
-            conn.close()
-    requested = request.args.get('step', type=int)
-    selected = next((e for e in events if e['stage']==requested), events[-1] if events else None)
-    return dict(state=state,events=events,selected=selected,steps=STEPS,
-                next_step=STEPS[state['stage']] if state and state['stage']<len(STEPS) else None)
-
-
-def database_details(table):
-    if table not in TABLES:
-        abort(404)
-    conn = db.get_db()
-    columns = [dict(r) for r in conn.execute(f'PRAGMA table_info({table})')]
-    foreign_keys = [dict(r) for r in conn.execute(f'PRAGMA foreign_key_list({table})')]
-    indexes = []
-    for row in conn.execute(f'PRAGMA index_list({table})'):
-        index = dict(row)
-        # Index names originate in SQLite, quoted as identifiers rather than interpolated SQL.
-        quoted = index['name'].replace('"','""')
-        index['columns'] = [r['name'] for r in conn.execute(f'PRAGMA index_info("{quoted}")')]
-        indexes.append(index)
-    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()['sql']
-    records = [dict(r) for r in conn.execute(f'SELECT * FROM {table} ORDER BY 1 LIMIT 8')]
-    return dict(table=table,table_label=TABLES[table],schema_columns=columns,foreign_keys=foreign_keys,
-        indexes=indexes,ddl=ddl,preview_rows=records,
-        record_count=conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0],
-        domain_counts=[dict(name=k,label=v,count=conn.execute(f'SELECT COUNT(*) FROM {k}').fetchone()[0]) for k,v in TABLES.items()])
+def record_event(conn, module_id, query_id, payload):
+    import oracledb
+    payload.update(module_id=module_id,query_id=query_id)
+    with conn.raw.cursor() as cur:
+        cur.setinputsizes(payload=oracledb.DB_TYPE_CLOB)
+        cur.execute("INSERT INTO lab_evidence(evidence_id,workspace_id,module_id,query_id,payload) VALUES(lab_id_seq.NEXTVAL,:w,:m,:q,:payload)",
+                    w=workspace(),m=module_id,q=query_id,payload=json.dumps(payload,ensure_ascii=False))
 
 
 @bp.get('/staff/presentation')
 @require_role('staff')
 def index():
-    view = request.args.get('view','walkthrough')
-    if view not in VIEWS:
+    conn=db.get_db()
+    view=request.args.get('view','modules')
+    if view == 'walkthrough':
+        view='flow'
+    if view == 'architecture':
+        view='modules'
+    if view not in ('modules','database','rules','coverage','flow'):
         abort(404)
-    context = dict(view=view,health=dict(
-        version=sqlite3.sqlite_version,
-        foreign_keys=bool(db.get_db().execute('PRAGMA foreign_keys').fetchone()[0]),
-        integrity=db.get_db().execute('PRAGMA quick_check').fetchone()[0]))
-    if view=='walkthrough':
-        context.update(walkthrough())
-    elif view=='database':
-        context.update(database_details(request.args.get('table','artwork')))
+    selected=find_module(request.args.get('module','collection'))
+    if selected is None:
+        abort(404)
+    evidence=events(conn,workspace())
+    state=conn.execute('SELECT * FROM lab_workspace WHERE workspace_id=? AND module_id=?',(workspace(),selected['id'])).fetchone()
+    completed={m['id']:set(e['query_id'] for e in evidence if e['module_id']==m['id']) for m in MODULES}
+    context=dict(view=view,modules=MODULES,selected=selected,state=state,evidence=evidence,
+                 completed=completed,extras=EXTRA_SELECTS,health=dict(version=conn.raw.version,
+                 schema=conn.execute('SELECT USER FROM dual').fetchone()[0]))
+    if view=='flow':
+        context['flow_state']=conn.execute("SELECT * FROM lab_workspace WHERE workspace_id=? AND module_id='workflow'",(workspace(),)).fetchone()
+        context['flow_titles']=FLOW_TITLES
+    if view=='database':
+        table=request.args.get('table','artwork')
+        if table not in TABLES:
+            abort(404)
+        context.update(table=table,columns=table_info(conn,table),
+            preview=result(conn,'SELECT * FROM '+table+' WHERE ROWNUM<=8'),
+            constraints=result(conn,"SELECT constraint_name,constraint_type,status FROM user_constraints WHERE table_name=:t ORDER BY constraint_type,constraint_name",{'t':table.upper()}),
+            ddl='')
+        with conn.raw.cursor() as cur:
+            cur.execute("SELECT DBMS_METADATA.GET_DDL('TABLE',:t) FROM dual",t=table.upper())
+            context['ddl']=cur.fetchone()[0].read()
     elif view=='rules':
-        context['triggers']=[dict(r) for r in db.get_db().execute("SELECT name,tbl_name,sql FROM sqlite_master WHERE type='trigger' ORDER BY tbl_name,name")]
-        context['service_sources']=[dict(name=name,code=inspect.getsource(getattr(services,name))) for name in ('_transaction','place_bid','open_auction','close_lot','update_payment')]
-    return render_template('admin/presentation.html',**context)
+        context['sources']=[]
+        for name in ('VALIDATE_BID','VALIDATE_SALE','LOT_UPDATE_GUARD','AUCTION_UPDATE_GUARD'):
+            source=conn.execute('SELECT text FROM user_source WHERE name=? ORDER BY line',(name,)).fetchall()
+            context['sources'].append(dict(name=name,code=''.join(r[0] for r in source)))
+        context['service_source']=inspect.getsource(services)
+    return render_template('admin/oracle.html',**context)
+
+
+@bp.post('/staff/presentation/execute/<module_id>/<query_id>')
+@require_role('staff')
+def execute(module_id,query_id):
+    mod=find_module(module_id)
+    query=next((q for q in mod['queries'] if q['id']==query_id),None) if mod else None
+    if query is None:
+        abort(404)
+    conn=db.get_db()
+    try:
+        state=conn.execute('SELECT * FROM lab_workspace WHERE workspace_id=? AND module_id=? FOR UPDATE',(workspace(),module_id)).fetchone()
+        if state is None:
+            conn.execute('INSERT INTO lab_workspace(workspace_id,module_id,record_id,stage) VALUES(?,?,?,0)',(workspace(),module_id,conn.next_id()))
+            state=conn.execute('SELECT * FROM lab_workspace WHERE workspace_id=? AND module_id=? FOR UPDATE',(workspace(),module_id)).fetchone()
+        presenter=request.form.get('presenter','').strip()[:100] or mod['presenter']
+        conn.execute('UPDATE lab_workspace SET presenter=? WHERE workspace_id=? AND module_id=?',(presenter,workspace(),module_id))
+        check=f"SELECT * FROM {mod['table']} WHERE {mod['pk']}=:record_id"
+        all_binds=dict(record_id=state['record_id'],value=request.form.get('value','').strip()[:150] or (mod['changed'] if query_id=='update' else mod['initial']),
+                       email=f"demo-{state['record_id']}@atelier.example",search='%'+request.form.get('search','').strip()[:100]+'%')
+        binds={k:v for k,v in all_binds.items() if ':'+k in query['sql']}
+        before=result(conn,check,{'record_id':state['record_id']}) if query['kind']!='SELECT' else None
+        if query['kind']=='SELECT':
+            output=result(conn,query['sql'],binds)
+            affected=None
+        else:
+            expected={'insert':0,'update':1,'delete':2}[query_id]
+            if state['stage']!=expected:
+                raise ValueError('Run INSERT, then UPDATE, then DELETE once, in that order. Completed results remain below.')
+            changed=conn.execute(query['sql'],binds)
+            affected=changed.rowcount
+            if affected!=1:
+                raise ValueError('Expected exactly one demonstration record. No changes committed.')
+            output=result(conn,check,{'record_id':state['record_id']})
+            conn.execute('UPDATE lab_workspace SET stage=? WHERE workspace_id=? AND module_id=?',(expected+1,workspace(),module_id))
+        payload=dict(title=query['title'],kind=query['kind'],presenter=presenter,sql=query['sql'],binds=binds,
+                     before=before,result=output,affected=affected,transaction='COMMIT',database='Oracle '+conn.raw.version)
+        record_event(conn,module_id,query_id,payload)
+        conn.commit()
+        flash(f"{query['kind']} executed in Oracle. Result saved for your report.",'success')
+    except (ValueError,db.IntegrityError,db.OperationalError) as error:
+        conn.rollback()
+        flash(str(error),'error')
+    return redirect(url_for('presentation.index',module=module_id)+'#latest-result')
+
+
+@bp.post('/staff/presentation/supplement/<key>')
+@require_role('staff')
+def supplement(key):
+    conn=db.get_db()
+    statements=[]
+    outputs=[]
+    try:
+        extra=next((q for q in EXTRA_SELECTS if q['id']==key),None)
+        if extra:
+            statements.append(extra['sql'])
+            outputs.append(result(conn,extra['sql']))
+        elif key=='tcl':
+            number=conn.next_id()
+            steps=[("INSERT INTO curator(curator_id,name) VALUES(:id,'TCL demonstration')",{'id':number}),
+                   ('COMMIT',{}),('SAVEPOINT before_change',{}),
+                   ("UPDATE curator SET name='Temporary value' WHERE curator_id=:id",{'id':number}),
+                   ('SELECT curator_id,name FROM curator WHERE curator_id=:id',{'id':number}),
+                   ('ROLLBACK TO before_change',{}),('SELECT curator_id,name FROM curator WHERE curator_id=:id',{'id':number}),
+                   ('DELETE FROM curator WHERE curator_id=:id',{'id':number}),('ROLLBACK',{}),
+                   ('SELECT curator_id,name FROM curator WHERE curator_id=:id',{'id':number}),
+                   ('DELETE FROM curator WHERE curator_id=:id',{'id':number}),('COMMIT',{})]
+            for sql,binds in steps:
+                statements.append(sql)
+                if sql.startswith('SELECT'):
+                    outputs.append(result(conn,sql,binds))
+                else:
+                    conn.execute(sql,binds)
+        elif key=='ddl':
+            name='LAB_DDL_'+str(conn.next_id())
+            steps=[f'CREATE TABLE {name} (example_id NUMBER PRIMARY KEY,note VARCHAR2(100))',
+                   f'ALTER TABLE {name} ADD created_on DATE DEFAULT SYSDATE',
+                   f'CREATE INDEX {name}_IX ON {name}(note)',
+                   f"SELECT column_name,data_type FROM user_tab_columns WHERE table_name='{name}' ORDER BY column_id",
+                   f'DROP TABLE {name} PURGE']
+            for sql in steps:
+                statements.append(sql)
+                if sql.startswith('SELECT'):
+                    outputs.append(result(conn,sql))
+                else:
+                    conn.execute(sql)
+        else:
+            abort(404)
+        payload=dict(title=extra['title'] if extra else key.upper()+' demonstration',kind=key.upper(),presenter='Group',
+                     sql=';\n'.join(statements),binds={},result=outputs[-1],outputs=outputs,
+                     before=None,affected=None,transaction='COMMIT',database='Oracle '+conn.raw.version)
+        record_event(conn,'supplement',key,payload)
+        conn.commit()
+        flash('Oracle result saved. DDL auto-commits; TCL results show the rollback effects.','success')
+    except (ValueError,db.OperationalError) as error:
+        conn.rollback()
+        flash(str(error),'error')
+    return redirect(url_for('presentation.index',view='coverage')+'#latest-result')
+
+
+@bp.get('/staff/presentation/export')
+@require_role('staff')
+def export():
+    evidence=events(db.get_db(),workspace())
+    text=['# Atelier — Oracle SQL execution evidence','',
+          'Executed in the Oracle project schema. Parameters and recorded results follow each statement.','']
+    for event in evidence:
+        text += [f"## {event['presenter']} · {event['title']}",'','```sql',event['sql']+';','```','',
+                 'Parameters: `'+json.dumps(event['binds'],ensure_ascii=False)+'`','',
+                 'Transaction: '+event['transaction'],'','```json',json.dumps(event,indent=2,ensure_ascii=False),'```','']
+    return Response('\n'.join(text),mimetype='text/markdown',headers={'Content-Disposition':'attachment; filename=Atelier_Oracle_Results.md'})
 
 
 @bp.post('/staff/presentation/start')
 @require_role('staff')
 def start():
-    with _runner_lock:
-        start_sandbox()
-    flash('A fresh presentation copy is ready. Your main gallery records are unchanged.','success')
-    return redirect(url_for('presentation.index')+'#demo-result')
+    return redirect(url_for('presentation.index',view='flow'))
 
 
-@bp.post('/staff/presentation/next')
+@bp.post('/staff/presentation/flow/next')
 @require_role('staff')
-def next_step():
+def flow_next():
+    conn=db.get_db()
     try:
-        raw = request.form.get('expected_stage','')
-        if not raw.isdigit() or len(raw)>2:
-            raise services.DomainError('Reload the presentation before running the next step.')
-        stage = run_step(int(raw))
-        return redirect(url_for('presentation.index',step=stage)+'#demo-result')
-    except (services.DomainError,sqlite3.Error) as error:
+        state=conn.execute("SELECT * FROM lab_workspace WHERE workspace_id=? AND module_id='workflow' FOR UPDATE",(workspace(),)).fetchone()
+        if state is None:
+            conn.execute("INSERT INTO lab_workspace(workspace_id,module_id,record_id,stage,presenter) VALUES(?,'workflow',?,0,'Group')",(workspace(),conn.next_id()))
+            state=conn.execute("SELECT * FROM lab_workspace WHERE workspace_id=? AND module_id='workflow' FOR UPDATE",(workspace(),)).fetchone()
+        stage=state['stage']
+        if request.form.get('expected_stage')!=str(stage) or stage>=8:
+            raise ValueError('This step has already run. Refresh to show the latest result.')
+        history=[event for event in events(conn,workspace()) if event['module_id']=='workflow']
+        ids=dict(history[-1]['flow']) if history else {'artwork_id':state['record_id']}
+        conn.trace=[]
+        conn.defer_commit=True
+        before=result(conn,'SELECT artwork_id,title,status FROM artwork WHERE artwork_id=:id',{'id':ids['artwork_id']})
+        if stage==0:
+            conn.execute("INSERT INTO artwork(artwork_id,artist_id,title,year_created,medium,image_path) VALUES(?,1,?,2026,'Oil on canvas','images/artwork-01.webp')",(ids['artwork_id'],f"Presentation Study {ids['artwork_id']}"))
+        elif stage==1:
+            conn.execute("INSERT INTO exhibition_artwork(exhibition_id,artwork_id,display_position) VALUES(1,?,'Presentation wall')",(ids['artwork_id'],))
+        elif stage==2:
+            conn.execute("INSERT INTO appraisal(artwork_id,expert_id,appraisal_date,estimated_value,notes) VALUES(?,1,TRUNC(SYSDATE),8000000,'Presentation assessment')",(ids['artwork_id'],))
+            conn.execute("INSERT INTO authentication(artwork_id,expert_id,certificate_no,authentication_date,result,notes) VALUES(?,1,?,TRUNC(SYSDATE),'Authentic','Presentation certificate')",(ids['artwork_id'],f"DEMO-{ids['artwork_id']}"))
+        elif stage==3:
+            ids['auction_id']=conn.execute('INSERT INTO auction(gallery_id,title,"DATE",venue) VALUES(1,?,TRUNC(SYSDATE),\'Atelier Mumbai\')',(f"Presentation Auction {ids['artwork_id']}",)).lastrowid
+            ids['lot_id']=conn.execute('INSERT INTO auction_lot(auction_id,artwork_id,lot_number,starting_price,reserve_price) VALUES(?,?,1,5000000,6000000)',(ids['auction_id'],ids['artwork_id'])).lastrowid
+            services.open_auction(conn,ids['auction_id'])
+        elif stage in (4,5):
+            ids['bid_id']=services.place_bid(conn,ids['lot_id'],1 if stage==4 else 3,6500000 if stage==4 else 7000000)
+        elif stage==6:
+            outcome=services.close_lot(conn,ids['lot_id'])
+            ids['sale_id']=outcome['sale_id']
+        else:
+            services.update_payment(conn,ids['sale_id'],'completed')
+        after=result(conn,'SELECT artwork_id,title,status FROM artwork WHERE artwork_id=:id',{'id':ids['artwork_id']})
+        outputs=[after]
+        if ids.get('lot_id'):
+            outputs.append(result(conn,'SELECT lot_id,status,(SELECT MAX(bid_amount)/100 FROM bid b WHERE b.lot_id=l.lot_id) AS highest_bid_inr FROM auction_lot l WHERE lot_id=:id',{'id':ids['lot_id']}))
+        if ids.get('sale_id'):
+            outputs.append(result(conn,'SELECT sale_id,sale_price/100 AS sale_inr,payment_status FROM sale WHERE sale_id=:id',{'id':ids['sale_id']}))
+            outputs.append(result(conn,'SELECT * FROM gallery_revenue ORDER BY gallery_id'))
+        executed=list(conn.trace)
+        conn.execute("UPDATE lab_workspace SET stage=? WHERE workspace_id=? AND module_id='workflow'",(stage+1,workspace()))
+        record_event(conn,'workflow',f'step{stage+1}',dict(title=FLOW_TITLES[stage],kind='WORKFLOW',presenter='Group',flow=ids,
+            sql=';\n'.join(e['sql'] for e in executed),binds={},executed=executed,result=after,outputs=outputs,
+            before=before,affected=None,transaction='COMMIT',database='Oracle '+conn.raw.version))
+        conn.commit()
+        flash('Oracle workflow step committed. SQL and outputs are saved.','success')
+    except (ValueError,db.OperationalError) as error:
+        conn.rollback()
         flash(str(error),'error')
-        return redirect(url_for('presentation.index'))
+    finally:
+        conn.defer_commit=False
+    return redirect(url_for('presentation.index',view='flow')+'#latest-result')

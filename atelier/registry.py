@@ -46,7 +46,15 @@ def paise(value):
 def table_info(conn, table):
     if table not in TABLES:
         raise KeyError(table)
-    return [dict(r) for r in conn.execute(f'PRAGMA table_info({table})')]
+    return [dict(r) for r in conn.execute('''SELECT LOWER(c.column_name) AS name,
+        CASE WHEN c.data_type='NUMBER' THEN 'INTEGER' ELSE c.data_type END AS type,
+        CASE WHEN c.nullable='N' THEN 1 ELSE 0 END AS notnull,
+        NVL(pk.position,0) AS pk
+        FROM user_tab_columns c
+        LEFT JOIN (SELECT cc.table_name,cc.column_name,cc.position
+          FROM user_cons_columns cc JOIN user_constraints co ON co.constraint_name=cc.constraint_name
+          WHERE co.constraint_type='P') pk ON pk.table_name=c.table_name AND pk.column_name=c.column_name
+        WHERE c.table_name=? ORDER BY c.column_id''', (table.upper(),))]
 
 
 def primary_keys(conn, table):

@@ -1,0 +1,1 @@
+The SQLite-specific tests were archived in docs/legacy-sqlite/tests. The Oracle migration is verified through scripts/verify_oracle.py and scripts/check_oracle_transactions.py, which exercise real Oracle transactions and save evidence. These checks create fictional demonstration records; they do not reset data.
